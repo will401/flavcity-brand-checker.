@@ -1,6 +1,6 @@
 # brand_ad_checker_app.py
 # FlavCity Brand Ad Checker — Copy-only (no OCR)
-# Channel-aware checks + always-visible issues + friendly Scoreboard.
+# Channel-aware checks + Scoreboard + line/column pointers + inline highlights.
 
 import re
 from dataclasses import dataclass, field
@@ -32,7 +32,7 @@ DEFAULT_POSITIVE_CUES = [
     "better-for-you", "real food ingredients",
 ]
 
-# Messaging pillars (used for nudges)
+# Messaging pillars (we use for nudges)
 PILLAR_FLAVOR = ["flavor-forward", "flavorful", "tastes phenomenal", "craveable", "taste you’ll love"]
 PILLAR_TRANSPARENCY = ["no natural flavors", "no artificial sweeteners", "no seed oils", "no fillers", "transparent"]
 PILLAR_CONVENIENCE = ["convenience", "without compromise", "no blender", "one scoop", "on-the-go"]
@@ -126,6 +126,38 @@ class Issue:
     span: Optional[Tuple[int,int]] = None
     snippet: Optional[str] = None
     suggestion: Optional[str] = None
+
+# ---------- Line/column helpers ----------
+def _line_starts(text: str):
+    starts = [0]
+    for i, ch in enumerate(text):
+        if ch == "\n":
+            starts.append(i + 1)
+    return starts
+
+def _idx_to_linecol(text: str, idx: int):
+    starts = _line_starts(text)
+    lo, hi = 0, len(starts) - 1
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if starts[mid] <= idx:
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    line_no = hi + 1
+    col_no  = idx - starts[hi] + 1
+    return line_no, col_no, starts
+
+def _line_slice(text: str, starts, line_no: int):
+    start = starts[line_no - 1]
+    end = starts[line_no] if line_no < len(starts) else len(text)
+    return text[start:end]
+
+def _with_line_numbers(text: str) -> str:
+    out_lines = []
+    for i, line in enumerate(text.splitlines(True), 1):
+        out_lines.append(f"{i:>3} | {line}")
+    return "".join(out_lines)
 
 # ---------- Utilities ----------
 def highlight_text(text: str, issues: List[Issue]) -> str:
@@ -328,7 +360,6 @@ def check_channel_rules(text: str, profile: dict) -> List[Issue]:
         issues.append(Issue("Channel: Emoji",
                             "Emojis aren’t recommended here.",
                             suggestion="Remove emojis for a cleaner, accessible look."))
-    # Soft nudges
     if profile["encourage"]:
         issues.append(Issue("Channel: Tips", f"Lean into: {', '.join(profile['encourage'])}."))
     if profile["discourage"]:
@@ -337,17 +368,8 @@ def check_channel_rules(text: str, profile: dict) -> List[Issue]:
 
 # ---------- Scoreboard ----------
 def compute_scores(issues: List[Issue]) -> dict:
-    """
-    Simple, friendly scoring out of 100:
-      - Brand Mechanics:    weight 35
-      - Voice & Tone:       weight 25
-      - Grammar & Spelling: weight 15
-      - Channel Fit:        weight 25
-    We subtract small points per issue category; never below zero.
-    """
     weights = {"brand": 35, "voice": 25, "grammar": 15, "channel": 25}
     penalties = {"brand": 0, "voice": 0, "grammar": 0, "channel": 0}
-
     for i in issues:
         cat = i.category.lower()
         if cat.startswith("brand"):               penalties["brand"]   += 10
@@ -359,34 +381,21 @@ def compute_scores(issues: List[Issue]) -> dict:
         elif "brand cue" in cat:                  penalties["voice"]  += 3
         elif "grammar" in cat:                    penalties["grammar"] += 5
         elif cat.startswith("channel"):           penalties["channel"] += 6
-
-    # Convert penalties to subscores (0..weight)
-    subs = {}
-    for k, w in weights.items():
-        score = max(0, w - penalties[k])
-        subs[k] = score
-
+    subs = {k: max(0, w - penalties[k]) for k, w in weights.items()}
     total = sum(subs.values())
     return {"subs": subs, "total": total, "weights": weights}
 
 def render_scoreboard(scores: dict):
-    subs = scores["subs"]
-    total = scores["total"]
+    subs = scores["subs"]; total = scores["total"]
     col1, col2, col3, col4, col5 = st.columns([1.1, 1, 1, 1, 1])
     with col1:
         st.markdown("### Scoreboard")
         st.metric("Overall", f"{total}/100")
         st.progress(total / 100)
-    with col2:
-        st.metric("Brand", f"{subs['brand']}/{scores['weights']['brand']}")
-    with col3:
-        st.metric("Voice/Tone", f"{subs['voice']}/{scores['weights']['voice']}")
-    with col4:
-        st.metric("Grammar", f"{subs['grammar']}/{scores['weights']['grammar']}")
-    with col5:
-        st.metric("Channel Fit", f"{subs['channel']}/{scores['weights']['channel']}")
-
-    # Quick coaching tip: point to the lowest subscore
+    with col2: st.metric("Brand",      f"{subs['brand']}/{scores['weights']['brand']}")
+    with col3: st.metric("Voice/Tone", f"{subs['voice']}/{scores['weights']['voice']}")
+    with col4: st.metric("Grammar",    f"{subs['grammar']}/{scores['weights']['grammar']}")
+    with col5: st.metric("Channel Fit",f"{subs['channel']}/{scores['weights']['channel']}")
     lowest = min(subs, key=subs.get)
     tips = {
         "brand": "Tighten the brand basics (name, capitalization, competitors).",
@@ -396,16 +405,34 @@ def render_scoreboard(scores: dict):
     }
     st.info(f"Focus tip → **{lowest.capitalize()}**: {tips[lowest]}")
 
-# ---------- Always-visible renderer ----------
-def render_issues(issues: List[Issue]):
+# ---------- Always-visible renderer WITH line/column + inline highlight ----------
+def render_issues(issues: List[Issue], source_text: str):
     if not issues:
         st.success("✅ Looks on-brand. No issues found.")
         return
     st.warning(f"⚠ {len(issues)} issues found:")
+
+    _, _, line_starts = _idx_to_linecol(source_text, 0)  # precompute line starts
+
     for idx, i in enumerate(issues, 1):
         st.markdown(f"**{idx}. {i.category}** — {i.message}")
-        if i.snippet:
+
+        if i.span is not None:
+            s, e = i.span
+            line_s, col_s, _ = _idx_to_linecol(source_text, s)
+            line_e, col_e, _ = _idx_to_linecol(source_text, max(s, e - 1))
+            st.caption(f"Line {line_s} (cols {col_s}–{col_e if line_e==line_s else '…'})")
+
+            line_text = _line_slice(source_text, line_starts, line_s)
+            line_start = line_starts[line_s - 1]
+            ls = max(0, s - line_start)
+            le = max(ls, e - line_start)
+            marked = line_text[:ls] + "[!]" + line_text[ls:le] + "[!/!]" + line_text[le:]
+            st.code(marked.rstrip("\n"))
+
+        elif i.snippet:
             st.code(i.snippet)
+
         if i.suggestion:
             st.markdown(f"*Suggestion:* **{i.suggestion}**")
         st.markdown("---")
@@ -413,15 +440,12 @@ def render_issues(issues: List[Issue]):
 # ---------- App UI ----------
 st.set_page_config(page_title="FlavCity Brand Ad Checker", page_icon="✅", layout="wide")
 st.title("FlavCity Brand Ad Checker")
-st.caption("Copy-only. Pick a channel and paste your copy. We’ll flag anything off-brand and suggest fixes.")
+st.caption("Copy-only. Pick a channel and paste your copy. We’ll flag issues, show exact lines, and suggest fixes.")
 
-# Persist results so they don't disappear on rerun
-if "issues_last" not in st.session_state:
-    st.session_state["issues_last"] = []
-if "text_last" not in st.session_state:
-    st.session_state["text_last"] = ""
-if "channel_last" not in st.session_state:
-    st.session_state["channel_last"] = "Email"
+# Persist results across reruns
+if "issues_last" not in st.session_state:   st.session_state["issues_last"] = []
+if "text_last"   not in st.session_state:   st.session_state["text_last"] = ""
+if "channel_last"not in st.session_state:   st.session_state["channel_last"] = "Email"
 if "scores_last" not in st.session_state:
     st.session_state["scores_last"] = {"subs": {"brand": 0, "voice": 0, "grammar": 0, "channel": 0},
                                        "total": 0,
@@ -507,12 +531,14 @@ render_scoreboard(st.session_state["scores_last"])
 
 # ----- Results (always visible) -----
 st.subheader("Results")
-render_issues(st.session_state["issues_last"])
+render_issues(st.session_state["issues_last"], st.session_state["text_last"])
 
 st.markdown("**Highlighted Copy**")
 st.code(
-    highlight_text(
-        st.session_state["text_last"],
-        [i for i in st.session_state["issues_last"] if i.span]
+    _with_line_numbers(
+        highlight_text(
+            st.session_state["text_last"],
+            [i for i in st.session_state["issues_last"] if i.span]
+        )
     )
 )
