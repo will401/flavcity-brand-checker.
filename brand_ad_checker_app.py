@@ -1,8 +1,3 @@
-st.image(
-    "https://yourcdn.com/flavcity-logo.png",  # Replace with hosted logo
-    width=200
-)
-
 st.title("FlavCity Brand Ad Checker")
 st.markdown(
     """
