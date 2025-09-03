@@ -1,5 +1,3 @@
 streamlit==1.36.0
+pillow==10.3.0
 language-tool-python==2.7.1
-# Leave Pillow unpinned so Streamlit brings a compatible (<11) wheel on Python 3.12
-# Add OCR only after it builds once:
-# pytesseract==0.3.10
