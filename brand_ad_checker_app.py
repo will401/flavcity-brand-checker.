@@ -1,16 +1,4 @@
-st.title("FlavCity Brand Ad Checker")
-st.markdown(
-    """
-    Welcome to the **FlavCity Brand Ad Checker**.  
-    Use this tool to make sure every piece of copy and creative:
-    - ✅ Stays on-brand  
-    - ✨ Reinforces key FlavCity cues (*whole-food, real-ingredient, clean-label*)  
-    - 📝 Is free of typos and grammar issues  
-    - 🎨 Uses approved visuals and color palette  
 
-    ---
-    """
-)
 import re
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional
