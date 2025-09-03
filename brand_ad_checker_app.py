@@ -1,10 +1,14 @@
+# brand_ad_checker_app.py
+# FlavCity Brand Ad Checker (copy-only, no OCR)
+# Shows ALL issues inline (no expanders) and keeps results visible after the button click.
+
 import re
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional
 
-import streamlit as st  # <-- THIS MUST BE PRESENT near the top
+import streamlit as st
 
-# Grammar tool (optional)
+# ---------- Optional grammar checker (will quietly skip if not available) ----------
 try:
     import language_tool_python
     LT_TOOL = language_tool_python.LanguageToolPublicAPI("en-US")
@@ -13,10 +17,7 @@ except Exception:
     LT_TOOL = None
     LT_AVAILABLE = False
 
-# ---------------------------
-# Configuration (editable in sidebar)
-# ---------------------------
-
+# ---------- Defaults you can tweak in the sidebar ----------
 DEFAULT_COMPETITORS = [
     "starbucks", "dunkin", "nespresso", "peet's", "peets",
     "blue bottle", "keurig", "tim hortons", "philz",
@@ -36,10 +37,7 @@ DEFAULT_NEGATIVE_TONE = [
     "sorry", "apologize", "guilt", "junk"
 ]
 
-# ---------------------------
-# Data classes
-# ---------------------------
-
+# ---------- Data classes ----------
 @dataclass
 class BrandRules:
     brand_name: str = "FlavCity"
@@ -55,16 +53,13 @@ class BrandRules:
 class Issue:
     category: str
     message: str
-    span: Optional[Tuple[int,int]] = None
-    snippet: Optional[str] = None
-    suggestion: Optional[str] = None
+    span: Optional[Tuple[int,int]] = None  # (start, end) in the text
+    snippet: Optional[str] = None          # a small offending piece to display
+    suggestion: Optional[str] = None       # “do this instead”
 
-# ---------------------------
-# Helpers
-# ---------------------------
-
+# ---------- Utilities ----------
 def highlight_text(text: str, issues: List[Issue]) -> str:
-    """Wrap offending spans with [!]...[/!] markers."""
+    """Surround offending spans with [!] ... [/!] so users can see them."""
     spans = [(i.span[0], i.span[1]) for i in issues if i.span is not None]
     if not spans:
         return text
@@ -85,14 +80,11 @@ def find_all(pattern: re.Pattern, text: str):
     for m in pattern.finditer(text):
         yield m.start(), m.end(), m.group(0)
 
-# ---------------------------
-# Checks
-# ---------------------------
-
+# ---------- Checks ----------
 def check_brand_name(text: str, rules: BrandRules) -> List[Issue]:
     issues = []
     correct = rules.brand_name
-    # Common incorrect variants to catch (spacing, casing, symbols)
+    # common incorrect variants (spacing/casing/symbols)
     bad_variants = [r"flav\s?city", r"flavcity™", r"flavcity©", r"flav\s? city", r"flavicity"]
     for pat in bad_variants:
         for s, e, val in find_all(re.compile(pat, re.IGNORECASE), text):
@@ -139,15 +131,12 @@ def check_required_phrases(text: str, rules: BrandRules) -> List[Issue]:
     return issues
 
 def check_positive_cues(text: str, rules: BrandRules) -> List[Issue]:
+    # gentle nudge: only the first 3 cues are “encouraged”
     issues = []
-    # Nudge on first 3 only, to avoid over-flagging
     found = {p for p in rules.positive_cues if re.search(re.escape(p), text, re.IGNORECASE)}
     missing = set(rules.positive_cues[:3]) - found
     for m in missing:
-        issues.append(Issue(
-            "Brand Cue",
-            f"Opportunity: consider reinforcing '{m}'."
-        ))
+        issues.append(Issue("Brand Cue", f"Opportunity: consider reinforcing '{m}'."))
     return issues
 
 def check_negative_tone(text: str, rules: BrandRules) -> List[Issue]:
@@ -183,7 +172,6 @@ def grammar_check(text: str) -> List[Issue]:
     return issues
 
 # ---- Capitalization consistency ----
-
 def is_title_like(line: str) -> bool:
     words = [w for w in re.findall(r"[A-Za-z][A-Za-z'-]*", line)]
     if not words:
@@ -206,7 +194,7 @@ def check_headline_capitalization(text: str) -> List[Issue]:
     titleish = [l for l in lines if is_title_like(l)]
     sentenceish = [l for l in lines if is_sentence_like(l)]
     if titleish and sentenceish:
-        examples = f"Title Case ex: “{titleish[0]}”; Sentence case ex: “{sentenceish[0]}”"
+        examples = f"Title Case ex: “{titleish[0]}”; sentence case ex: “{sentenceish[0]}”"
         issues.append(Issue(
             "Capitalization",
             f"Headline capitalization appears mixed. {examples}",
@@ -216,7 +204,6 @@ def check_headline_capitalization(text: str) -> List[Issue]:
 
 def check_product_term_casing(text: str, rules: BrandRules) -> List[Issue]:
     issues = []
-    # For each term, if multiple casings appear (e.g., latte vs Latte), flag it.
     for term in rules.product_terms:
         variants = set(m.group(0) for m in re.finditer(rf"\b{term}\b", text, re.IGNORECASE))
         if len(variants) > 1:
@@ -228,29 +215,42 @@ def check_product_term_casing(text: str, rules: BrandRules) -> List[Issue]:
             ))
     return issues
 
-# ---------------------------
-# UI
-# ---------------------------
+# ---------- Always-visible renderer ----------
+def render_issues(issues: List[Issue]):
+    if not issues:
+        st.success("✅ Looks on-brand. No issues found.")
+        return
+    st.warning(f"⚠ {len(issues)} issues found:")
+    for idx, i in enumerate(issues, 1):
+        st.markdown(f"**{idx}. {i.category}** — {i.message}")
+        if i.snippet:
+            st.code(i.snippet)
+        if i.suggestion:
+            st.markdown(f"*Suggestion:* **{i.suggestion}**")
+        st.markdown("---")
 
+# ---------- App UI ----------
 st.set_page_config(page_title="FlavCity Brand Ad Checker", page_icon="✅", layout="wide")
-
-# Optional header / branding block (replace with your hosted logo URL if you like)
 st.title("FlavCity Brand Ad Checker")
-st.caption("Copy-only version (no OCR). Checks brand compliance, capitalization, and grammar.")
+st.caption("Copy-only version (no OCR). Shows all issues inline and keeps them visible after checks.")
+
+# Keep results between reruns so they don't disappear
+if "issues_last" not in st.session_state:
+    st.session_state["issues_last"] = []
+if "text_last" not in st.session_state:
+    st.session_state["text_last"] = ""
 
 with st.sidebar:
     st.header("Settings")
     brand_name = st.text_input("Brand Name", value="FlavCity")
     competitors = st.text_area("Competitor names (one per line)", value="\n".join(DEFAULT_COMPETITORS))
-    required_phrases = st.text_area("Required phrases (optional, one per line)", value="")
+    required_phrases = st.text_area("Required phrases (one per line, optional)", value="")
     positive_cues = st.text_area("Positive brand cues (top 3 nudged)", value="\n".join(DEFAULT_POSITIVE_CUES))
     negative_tone = st.text_area("Negative tone words (warn)", value="\n".join(DEFAULT_NEGATIVE_TONE))
-    product_terms = st.text_input("Product terms (for capitalization, comma-separated)", value="Latte,Mocha,Macchiato")
-
+    product_terms = st.text_input("Product terms to enforce capitalization (comma-separated)", value="Latte,Mocha,Macchiato")
     need_reg_mark = st.checkbox("Require ® on first 'FlavCity' usage", value=False)
     st.markdown("---")
     st.write(f"Grammar checker: {'✅ enabled' if LT_AVAILABLE else '❌ unavailable'}")
-    st.caption("If unavailable, LanguageTool public API couldn't be reached from this environment.")
 
 rules = BrandRules(
     brand_name=brand_name,
@@ -283,17 +283,18 @@ with tab:
         all_issues += check_product_term_casing(text, rules)
         all_issues += grammar_check(text)
 
-        st.subheader("Results")
-        if not all_issues:
-            st.success("✅ Looks on-brand. No issues found.")
-        else:
-            st.warning(f"⚠ {len(all_issues)} issues found:")
-            for i in all_issues:
-                with st.expander(f"{i.category}: {i.message}"):
-                    if i.snippet:
-                        st.code(i.snippet)
-                    if i.suggestion:
-                        st.write("Suggestion:", f"**{i.suggestion}**")
+        # Store so they remain visible after rerun
+        st.session_state["issues_last"] = all_issues
+        st.session_state["text_last"] = text
 
-            st.markdown("**Highlighted Copy**")
-            st.code(highlight_text(text, [i for i in all_issues if i.span]))
+# Always show the latest results
+st.subheader("Results")
+render_issues(st.session_state["issues_last"])
+
+st.markdown("**Highlighted Copy**")
+st.code(
+    highlight_text(
+        st.session_state["text_last"],
+        [i for i in st.session_state["issues_last"] if i.span]
+    )
+)
