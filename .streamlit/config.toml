@@ -1,0 +1,6 @@
+[theme]
+primaryColor = "#00B9B9"         # your turquoise
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F6F6F6"
+textColor = "#005261"            # your deep teal
+font = "sans serif"
