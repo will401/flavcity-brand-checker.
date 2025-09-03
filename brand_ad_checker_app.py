@@ -1,21 +1,10 @@
-# brand_ad_checker_app.py
-# FlavCity Brand Ad Checker (Copy-only, no OCR)
-# - Brand name enforcement
-# - Competitor mentions
-# - Required phrases (optional)
-# - Positive cue nudges
-# - Negative tone warnings
-# - Grammar & spelling (LanguageTool public API if available)
-# - Capitalization consistency (headlines + product terms)
-# No image OCR to keep cloud deploys reliable.
-
 import re
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional
 
-import streamlit as st
+import streamlit as st  # <-- THIS MUST BE PRESENT near the top
 
-# Try to enable grammar checks via LanguageTool public API.
+# Grammar tool (optional)
 try:
     import language_tool_python
     LT_TOOL = language_tool_python.LanguageToolPublicAPI("en-US")
