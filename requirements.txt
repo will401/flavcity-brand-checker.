@@ -1,4 +1,4 @@
 streamlit==1.36.0
-pillow==11.0.0
+pillow==10.3.0
 language-tool-python==2.7.1
 pytesseract==0.3.10
